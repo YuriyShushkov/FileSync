@@ -1,6 +1,7 @@
 ﻿using DataModel;
 using System;
 using System.Collections.Concurrent;
+using System.Data.SqlServerCe;
 using System.IO;
 using System.Security.Cryptography;
 using System.Timers;
@@ -15,15 +16,30 @@ namespace ProcessingLocalFiles
 		static string FILE_PETTERN = "*.*";
 		static TimeSpan StartFindInterval = new TimeSpan(0,0,0,0,1);
 		static TimeSpan StartAnaliteInterval = new TimeSpan(0, 0, 0, 0, 5);
+		static TimeSpan SaveInterval = new TimeSpan(0, 0, 0, 15, 0);
+		static DBModel DBModel ;
+		static int PACKSIZE2SAVE = 100;
+		static string RootDir = "D:\\";
+
 
 		static void Main(string[] args)
 		{
-			dirs.Enqueue("D:\\");
+
+			File.Delete("Test.sdf");
+			string connString = "Data Source='Test.sdf'; LCID=1033;   Password=123; Encrypt = TRUE;";
+			SqlCeEngine engine = new SqlCeEngine(connString);
+			engine.CreateDatabase();
+			DBModel = new DBModel(engine.LocalConnectionString);
+
+			dirs.Enqueue(RootDir);
 			// Таймер обхода директорий
 			StartTimer(FillDirs, StartFindInterval.TotalMilliseconds);
 
 			// Таймер анализа файлов
 			StartTimer(AnalyteFiles, StartAnaliteInterval.TotalMilliseconds);
+
+			// Таймер анализа файлов
+			StartTimer(SaveData, SaveInterval.TotalMilliseconds);
 
 			Console.ReadKey();
 			dirs.Enqueue("D:\\");
@@ -83,12 +99,13 @@ namespace ProcessingLocalFiles
 				string file;
 				files.TryDequeue(out file);
 				Console.WriteLine($"Анализ файла {file}, в очереди {files.Count}");
-				if (!String.IsNullOrEmpty(file))     // Только если в списке есть записи
+				if (!string.IsNullOrEmpty(file))     // Только если в списке есть записи
 				{
 					try
 					{
-						content.Enqueue(ComputeMD5Checksum(file));
-						
+						var FilesCopy = ComputeMD5Checksum(file);
+						content.Enqueue(FilesCopy);
+
 					}
 					catch (Exception ex)
 					{
@@ -97,6 +114,17 @@ namespace ProcessingLocalFiles
 
 				}
 			}
+		}
+
+		static void SaveData(object sender, EventArgs e)
+		{
+			FilesCopy file;
+			int i = PACKSIZE2SAVE;
+			while (content.TryDequeue(out file) && i-- > 0)
+			{
+				DBModel.FilesCopy.Add(file);
+			}
+			DBModel.SaveChanges();
 		}
 
 		static FilesCopy ComputeMD5Checksum(string path)
@@ -108,7 +136,7 @@ namespace ProcessingLocalFiles
 				fs.Read(fileData, 0, (int)fs.Length);
 				byte[] checkSum = md5.ComputeHash(fileData);
 				string result = BitConverter.ToString(checkSum).Replace("-", string.Empty);
-				return new FilesCopy{CRC=result, FileName=path, Length = fs.Length };
+				return new FilesCopy{CRC=result, FileName=path.Remove(0, RootDir.Length), Length = fs.Length };
 			}
 		}
 	}
