@@ -3,6 +3,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Data.SqlServerCe;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Timers;
 
@@ -18,17 +19,18 @@ namespace ProcessingLocalFiles
 		static TimeSpan StartAnaliteInterval = new TimeSpan(0, 0, 0, 0, 5);
 		static TimeSpan SaveInterval = new TimeSpan(0, 0, 0, 15, 0);
 		static DBModel DBModel ;
+		static Guid CurSource = new Guid("babcf50f-1bcd-41d0-96d6-33c38c1cd960");
 		static int PACKSIZE2SAVE = 100;
-		static string RootDir = "D:\\";
-
+		static string RootDir = @"d:\Shared\";
+		static string DB = "Test.sdf";
 
 		static void Main(string[] args)
 		{
-
-			File.Delete("Test.sdf");
-			string connString = "Data Source='Test.sdf'; LCID=1033;   Password=123; Encrypt = TRUE;";
+			string connString = $"Data Source='{DB}'; LCID=1033;   Password=123; Encrypt = TRUE;";
 			SqlCeEngine engine = new SqlCeEngine(connString);
-			engine.CreateDatabase();
+			if (!File.Exists(DB))
+				engine.CreateDatabase();
+						
 			DBModel = new DBModel(engine.LocalConnectionString);
 
 			dirs.Enqueue(RootDir);
@@ -42,7 +44,7 @@ namespace ProcessingLocalFiles
 			StartTimer(SaveData, SaveInterval.TotalMilliseconds);
 
 			Console.ReadKey();
-			dirs.Enqueue("D:\\");
+			dirs.Enqueue(RootDir);
 			Console.ReadKey();
 		}
 
@@ -122,7 +124,20 @@ namespace ProcessingLocalFiles
 			int i = PACKSIZE2SAVE;
 			while (content.TryDequeue(out file) && i-- > 0)
 			{
-				DBModel.FilesCopy.Add(file);
+				var finded = DBModel.FilesCopy.FirstOrDefault(x=>x.FileName == file.FileName);
+				if(finded != null)
+				{
+					if(finded.CRC != file.CRC || finded.Length != file.Length)
+					{
+						finded.CRC			= file.CRC;
+						finded.Length		= file.Length;
+						finded.CreateDate	= file.CreateDate;
+						finded.WriteDate	= file.WriteDate;
+					}
+				}else
+				{
+					DBModel.FilesCopy.Add(file);
+				}
 			}
 			DBModel.SaveChanges();
 		}
@@ -132,11 +147,20 @@ namespace ProcessingLocalFiles
 			using (FileStream fs = File.OpenRead(path))
 			{
 				MD5 md5 = new MD5CryptoServiceProvider();
-				byte[] fileData = new byte[fs.Length];
-				fs.Read(fileData, 0, (int)fs.Length);
-				byte[] checkSum = md5.ComputeHash(fileData);
-				string result = BitConverter.ToString(checkSum).Replace("-", string.Empty);
-				return new FilesCopy{CRC=result, FileName=path.Remove(0, RootDir.Length), Length = fs.Length };
+				SHA256Managed sha = new SHA256Managed();
+				byte[] checksum = sha.ComputeHash(fs);
+				string result = BitConverter.ToString(checksum).Replace("-", String.Empty);
+				var id = Guid.NewGuid();
+				return new FilesCopy {
+					CRC = result
+					, FileName = path.Remove(0, RootDir.Length)
+					, Length = fs.Length
+					, Id = id
+					, CreateDate = File.GetCreationTimeUtc(path)
+					, WriteDate = File.GetLastWriteTimeUtc(path)
+					, Source = CurSource
+					, SourceId = id
+			};
 			}
 		}
 	}
